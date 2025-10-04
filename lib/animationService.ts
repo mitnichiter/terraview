@@ -95,7 +95,22 @@ async function createBatchVideo(jobId: string, batchJobDir: string, tileXCoords:
       .composite(compositeOperations)
       .toFile(framePath);
 
-    await fs.rm(dailyTileDir, { recursive: true, force: true });
+    // Robust cleanup for daily tiles to handle Windows file locking
+    let attempts = 0;
+    const maxAttempts = 5;
+    while (attempts < maxAttempts) {
+      try {
+        await fs.rm(dailyTileDir, { recursive: true, force: true });
+        break;
+      } catch (error) {
+        attempts++;
+        if (attempts >= maxAttempts) {
+          console.error(`[${jobId}] Daily cleanup failed for ${dailyTileDir} after ${maxAttempts} attempts:`, error);
+          throw error; // If daily cleanup fails, we must stop the job.
+        }
+        await new Promise(resolve => setTimeout(resolve, 500)); // Wait before retry
+      }
+    }
   }
 
   const batchClipPath = path.join(batchJobDir, 'batch_clip.mp4');
