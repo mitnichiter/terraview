@@ -95,22 +95,7 @@ async function createBatchVideo(jobId: string, batchJobDir: string, tileXCoords:
       .composite(compositeOperations)
       .toFile(framePath);
 
-    // Robust cleanup for daily tiles to handle Windows file locking
-    let attempts = 0;
-    const maxAttempts = 5;
-    while (attempts < maxAttempts) {
-      try {
-        await fs.rm(dailyTileDir, { recursive: true, force: true });
-        break;
-      } catch (error) {
-        attempts++;
-        if (attempts >= maxAttempts) {
-          console.error(`[${jobId}] Daily cleanup failed for ${dailyTileDir} after ${maxAttempts} attempts:`, error);
-          throw error; // If daily cleanup fails, we must stop the job.
-        }
-        await new Promise(resolve => setTimeout(resolve, 500)); // Wait before retry
-      }
-    }
+    // Daily cleanup disabled by user request for caching.
   }
 
   const batchClipPath = path.join(batchJobDir, 'batch_clip.mp4');
@@ -204,11 +189,7 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
     console.error(`[${jobId}] Animation failed:`, error);
     jobs.set(jobId, { status: 'failed', error: (error as Error).message });
   } finally {
-    try {
-      await fs.rm(jobDir, { recursive: true, force: true });
-      console.log(`[${jobId}] Final cleanup complete.`);
-    } catch (cleanupError) {
-      console.error(`[${jobId}] Final cleanup failed:`, cleanupError);
-    }
+    // Final cleanup disabled by user request for caching.
+    console.log(`[${jobId}] Job finished. Temporary files are preserved in ${jobDir}`);
   }
 }
