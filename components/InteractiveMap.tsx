@@ -10,10 +10,11 @@ import { LeafletEvent } from 'leaflet';
 interface InteractiveMapProps {
   center: [number, number];
   zoom: number;
+  onCountrySelect: (countryName: string, bounds: [number, number, number, number]) => void;
 }
 
 // Helper component to update map view
-const MapUpdater = ({ center, zoom }: InteractiveMapProps) => {
+const MapUpdater = ({ center, zoom }: Pick<InteractiveMapProps, 'center' | 'zoom'>) => {
   const map = useMap();
   useEffect(() => {
     map.flyTo(center, zoom);
@@ -21,7 +22,7 @@ const MapUpdater = ({ center, zoom }: InteractiveMapProps) => {
   return null;
 };
 
-const InteractiveMap = ({ center, zoom }: InteractiveMapProps) => {
+const InteractiveMap = ({ center, zoom, onCountrySelect }: InteractiveMapProps) => {
   const [geoJsonData, setGeoJsonData] = useState<GeoJsonObject | null>(null);
 
   useEffect(() => {
@@ -61,14 +62,22 @@ const InteractiveMap = ({ center, zoom }: InteractiveMapProps) => {
         (event.target as any).setStyle(defaultStyle);
       },
       click: (event: LeafletEvent) => {
-        event.target._map.fitBounds(event.target.getBounds());
-        console.log('Clicked on:', feature.properties.name);
+        const bounds = event.target.getBounds();
+        event.target._map.fitBounds(bounds);
+        const countryName = feature.properties.name;
+        const boundingBox: [number, number, number, number] = [
+          bounds.getWest(),
+          bounds.getSouth(),
+          bounds.getEast(),
+          bounds.getNorth()
+        ];
+        onCountrySelect(countryName, boundingBox);
       },
     });
   };
 
   return (
-    <MapContainer center={center} zoom={zoom} style={{ height: '100vh', width: '100%' }}>
+    <MapContainer center={center} zoom={zoom} style={{ height: '100%', width: '100%' }}>
       <MapUpdater center={center} zoom={zoom} />
       <TileLayer
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
