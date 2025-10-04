@@ -85,6 +85,14 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
     const tileYCoords = Array.from({ length: bottomRight.y - topLeft.y + 1 }, (_, i) => topLeft.y + i);
     const gridWidth = tileXCoords.length;
     const gridHeight = tileYCoords.length;
+
+    // --- FINAL SAFEGUARD for frame size ---
+    const MAX_GRID_DIMENSION = 32; // Limit to a 32x32 grid of tiles per day
+    if (gridWidth > MAX_GRID_DIMENSION || gridHeight > MAX_GRID_DIMENSION) {
+      throw new Error(`The selected geographical area is too large (grid size: ${gridWidth}x${gridHeight}). Please select a smaller region.`);
+    }
+    // ---
+
     const frameWidth = gridWidth * 512;
     const frameHeight = gridHeight * 512;
 
