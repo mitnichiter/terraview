@@ -82,7 +82,7 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
 
     // --- CRITICAL SAFEGUARDS ---
     const MAX_DAYS = 31; // Limit animations to one month
-    const MAX_TILES = 2000; // Limit total images to prevent server overload
+    const MAX_TILES = 5000; // Limit total images to prevent server overload
 
     if (dates.length > MAX_DAYS) {
       throw new Error(`Date range too large. Please select a period of ${MAX_DAYS} days or less.`);
