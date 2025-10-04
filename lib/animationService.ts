@@ -52,8 +52,10 @@ async function downloadImage(url: string, filepath: string) {
     const buffer = await response.arrayBuffer();
     await fs.writeFile(filepath, Buffer.from(buffer));
   } catch (error) {
-    console.error(`Error in downloadImage for ${url}:`, error);
-    throw error;
+    // If ANY error occurs during download (timeout, network issue, etc.),
+    // log it and create a blank tile to prevent the entire job from failing.
+    console.warn(`Download failed for ${url}: ${(error as Error).message}. Creating a blank tile.`);
+    await sharp({ create: { width: 512, height: 512, channels: 3, background: { r: 0, g: 0, b: 0 } } }).jpeg().toFile(filepath);
   }
 }
 
