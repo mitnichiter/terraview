@@ -163,7 +163,8 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
     for (let row = 0; row < numBatchRows; row++) {
         finalComplexFilter.push(`[row${row}]`);
     }
-    finalComplexFilter.push(`vstack=${numBatchRows}[v]`);
+    // After stacking all rows, add a final scaling filter to ensure the output is a reasonable size.
+    finalComplexFilter.push(`vstack=${numBatchRows},scale=1024:-1[v]`);
 
     const ffmpegCommand = ffmpeg();
     batchClipPaths.flat().forEach(p => ffmpegCommand.input(p));
