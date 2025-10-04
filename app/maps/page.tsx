@@ -221,7 +221,16 @@ export default function MapsPage() {
             {jobStatus === 'complete' && animationUrl && (
               <div>
                 <h3 className="text-lg font-medium mb-2">Animation Ready!</h3>
-                <img src={animationUrl} alt="Generated Animation" className="w-full rounded-md" />
+                <video
+                  src={animationUrl}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full rounded-md"
+                >
+                  Your browser does not support the video tag.
+                </video>
               </div>
             )}
             {jobStatus === 'failed' && (
