@@ -73,85 +73,68 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
     await fs.mkdir(jobDir, { recursive: true });
     console.log(`[${jobId}] Starting animation generation...`);
 
-    // 1. Tile Calculation
+    // --- Day-by-Day Processing Logic ---
+
+    // 1. Calculate constant values outside the loop
     const [minLon, minLat, maxLon, maxLat] = boundingBox;
     const topLeft = lonLatToTile(minLon, maxLat, ZOOM_LEVEL);
     const bottomRight = lonLatToTile(maxLon, minLat, ZOOM_LEVEL);
-
     const dates = getDatesInRange(startDate, endDate);
 
-    // --- CRITICAL SAFEGUARDS ---
-    const MAX_DAYS = 31; // Limit animations to one month
-    const MAX_TILES = 5000; // Limit total images to prevent server overload
-
-    if (dates.length > MAX_DAYS) {
-      throw new Error(`Date range too large. Please select a period of ${MAX_DAYS} days or less.`);
-    }
-
-    const tileXRange = (bottomRight.x - topLeft.x + 1);
-    const tileYRange = (bottomRight.y - topLeft.y + 1);
-    const totalTiles = tileXRange * tileYRange * dates.length;
-
-    if (totalTiles > MAX_TILES) {
-      throw new Error(`The selected area and date range is too large (${totalTiles} tiles). Please select a smaller region or a shorter period.`);
-    }
-    // --- END SAFEGUARDS ---
-
-    const imageUrls: { date: string, url: string, x: number, y: number }[] = [];
-
-    for (const date of dates) {
-      for (let y = topLeft.y; y <= bottomRight.y; y++) {
-        for (let x = topLeft.x; x <= bottomRight.x; x++) {
-          const url = GIBS_URL_TEMPLATE
-            .replace('{date}', date)
-            .replace('{x}', x.toString())
-            .replace('{y}', y.toString());
-          imageUrls.push({ date, url, x, y });
-        }
-      }
-    }
-    console.log(`[${jobId}] Calculated ${imageUrls.length} tiles to fetch across ${dates.length} days.`);
-
-    // 2. Image Fetching
-    console.log(`[${jobId}] Fetching images...`);
-    await Promise.all(imageUrls.map((imageInfo, index) => {
-        const { date, x, y } = imageInfo;
-        const imagePath = path.join(jobDir, `tile_${date}_${x}_${y}.jpg`);
-        process.stdout.write(`\r[${jobId}] Downloading image ${index + 1} of ${imageUrls.length}`);
-        return downloadImage(imageInfo.url, imagePath);
-    }));
-    process.stdout.write('\n'); // New line after progress indicator
-
-    // 3. Image Stitching
-    console.log(`[${jobId}] Stitching daily frames...`);
-    const tileXCoords = [...new Set(imageUrls.map(t => t.x))].sort((a, b) => a - b);
-    const tileYCoords = [...new Set(imageUrls.map(t => t.y))].sort((a, b) => a - b);
+    const tileXCoords = Array.from({ length: bottomRight.x - topLeft.x + 1 }, (_, i) => topLeft.x + i);
+    const tileYCoords = Array.from({ length: bottomRight.y - topLeft.y + 1 }, (_, i) => topLeft.y + i);
     const gridWidth = tileXCoords.length;
     const gridHeight = tileYCoords.length;
     const frameWidth = gridWidth * 512;
     const frameHeight = gridHeight * 512;
 
-    for (const [index, date] of dates.entries()) {
-      const dailyTiles = imageUrls.filter(img => img.date === date);
+    // 2. Process each day sequentially to keep memory usage low
+    for (const [dateIndex, date] of dates.entries()) {
+      const dailyJobDir = path.join(jobDir, date);
+      await fs.mkdir(dailyJobDir, { recursive: true });
+      console.log(`[${jobId}] Processing Day ${dateIndex + 1}/${dates.length} (${date})`);
 
-      const compositeOperations = dailyTiles.map(tile => {
-        const tilePath = path.join(jobDir, `tile_${tile.date}_${tile.x}_${tile.y}.jpg`);
-        const xOffset = (tile.x - tileXCoords[0]) * 512;
-        const yOffset = (tile.y - tileYCoords[0]) * 512;
-        return { input: tilePath, left: xOffset, top: yOffset };
-      });
+      // a. Download tiles for the current day
+      const downloadPromises = [];
+      for (const y of tileYCoords) {
+        for (const x of tileXCoords) {
+          const url = GIBS_URL_TEMPLATE.replace('{date}', date).replace('{x}', x.toString()).replace('{y}', y.toString());
+          const imagePath = path.join(dailyJobDir, `tile_${x}_${y}.jpg`);
+          downloadPromises.push(downloadImage(url, imagePath));
+        }
+      }
+      // Use Promise.allSettled to ensure all downloads complete, even if some fail.
+      // This prevents the race condition where cleanup starts before all operations are done.
+      const results = await Promise.allSettled(downloadPromises);
+      const failedDownloads = results.filter(r => r.status === 'rejected').length;
+      if (failedDownloads > 0) {
+        console.warn(`[${jobId}] ${failedDownloads} tiles failed to download for ${date}. They will be treated as blank tiles.`);
+      }
+      console.log(`[${jobId}] Finished processing downloads for ${date}`);
 
-      const framePath = path.join(jobDir, `frame_${String(index).padStart(4, '0')}.jpg`);
+      // b. Stitch the downloaded tiles into a single frame for the day
+      const compositeOperations = [];
+      for (const y of tileYCoords) {
+        for (const x of tileXCoords) {
+          const tilePath = path.join(dailyJobDir, `tile_${x}_${y}.jpg`);
+          const xOffset = (x - tileXCoords[0]) * 512;
+          const yOffset = (y - tileYCoords[0]) * 512;
+          compositeOperations.push({ input: tilePath, left: xOffset, top: yOffset });
+        }
+      }
+
+      const framePath = path.join(jobDir, `frame_${String(dateIndex).padStart(4, '0')}.jpg`);
       await sharp({ create: { width: frameWidth, height: frameHeight, channels: 3, background: { r: 0, g: 0, b: 0 } } })
         .composite(compositeOperations)
         .toFile(framePath);
+      console.log(`[${jobId}] Created frame for ${date}`);
 
-      process.stdout.write(`\r[${jobId}] Created frame ${index + 1} of ${dates.length}`);
+      // c. Clean up the daily tiles immediately to save disk space
+      await fs.rm(dailyJobDir, { recursive: true, force: true });
     }
-    process.stdout.write('\n');
 
-    // 4. Video/GIF Generation
-    console.log(`[${jobId}] Creating animation with FFmpeg...`);
+    // 3. Create the final animation from the daily frames
+    console.log(`[${jobId}] Creating final animation from ${dates.length} frames...`);
     const animationOutputPath = path.join(process.cwd(), 'public', 'animations', `${jobId}.gif`);
     await fs.mkdir(path.dirname(animationOutputPath), { recursive: true });
 
@@ -159,12 +142,18 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
       ffmpeg(path.join(jobDir, 'frame_%04d.jpg'))
         .inputOptions(['-framerate 10'])
         .outputOptions(['-vf scale=1024:-1'])
-        .on('end', resolve)
-        .on('error', reject)
+        .on('end', () => {
+          console.log(`[${jobId}] FFmpeg processing finished.`);
+          resolve();
+        })
+        .on('error', (err) => {
+          console.error(`[${jobId}] FFmpeg error:`, err);
+          reject(err);
+        })
         .save(animationOutputPath);
     });
 
-    // 5. Update Job Status on Success
+    // 4. Update Job Status on Success
     const animationPath = `/animations/${jobId}.gif`;
     jobs.set(jobId, { status: 'complete', url: animationPath });
     console.log(`[${jobId}] Animation complete: ${animationPath}`);
@@ -173,27 +162,12 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
     console.error(`[${jobId}] Animation failed:`, error);
     jobs.set(jobId, { status: 'failed', error: (error as Error).message });
   } finally {
-    // 6. Cleanup
-    // Use a more robust cleanup with retries to handle potential race conditions
-    // where file handles might not be released immediately.
-    let attempts = 0;
-    const maxAttempts = 5;
-    while (attempts < maxAttempts) {
-      try {
-        await fs.rm(jobDir, { recursive: true, force: true });
-        console.log(`[${jobId}] Cleanup complete.`);
-        break; // Exit loop on success
-      } catch (error) {
-        attempts++;
-        if (attempts >= maxAttempts) {
-          console.error(`[${jobId}] Cleanup failed after ${maxAttempts} attempts:`, error);
-          // Don't re-throw, as we don't want to crash the server over a cleanup failure.
-          // The folder will be orphaned, but the server stays up.
-          break;
-        }
-        console.warn(`[${jobId}] Cleanup attempt ${attempts} failed. Retrying in 1 second...`);
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
-      }
+    // 5. Final Cleanup (remove the main job directory with the frames)
+    try {
+      await fs.rm(jobDir, { recursive: true, force: true });
+      console.log(`[${jobId}] Final cleanup complete.`);
+    } catch (cleanupError) {
+      console.error(`[${jobId}] Final cleanup failed:`, cleanupError);
     }
   }
 }
