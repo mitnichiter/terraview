@@ -1,0 +1,213 @@
+Of course. Here is a highly detailed, step-by-step technical project plan for "TerraScope," broken down into distinct phases. This plan focuses on the what and the how at a technical level, without providing any code.
+
+Project: TerraScope
+
+Objective: To create an interactive web application for exploring significant global environmental events through AI-generated narratives and on-demand satellite animations using NASA's Terra satellite data.
+
+Phase 0: Foundation and Project Setup
+
+Goal: Establish a robust project structure, install all necessary dependencies, and configure the development environment.
+
+Step 1: Initialize Next.js Project
+
+Use create-next-app to scaffold a new project with TypeScript, Tailwind CSS, and the App Router.
+
+Establish a clear directory structure:
+
+/app: For application routes (e.g., /, /maps).
+
+/app/api: For all backend API endpoints.
+
+/components: For reusable React components.
+
+/components/ui: For Shadcn UI components.
+
+/lib: For helper functions, API clients, and constants.
+
+/public: For static assets like GeoJSON files and generated animations.
+
+Step 2: Install Core Dependencies
+
+Frontend: leaflet, react-leaflet for map rendering.
+
+Backend: @google/generative-ai for AI integration, fluent-ffmpeg as a Node.js wrapper for FFmpeg, sharp for server-side image manipulation (stitching tiles).
+
+UI: Initialize shadcn-ui and add necessary components (Button, Card, Dialog, Accordion, Input, Skeleton).
+
+Step 3: Environment Configuration
+
+Create a .env.local file to securely store API keys (Google AI/Gemini API Key).
+
+Install FFmpeg on the local development machine and ensure its executable is available in the system's PATH so that the Node.js application can call it.
+
+Step 4: Acquire Static Data Assets
+
+Download a high-quality GeoJSON file containing world country boundaries from a source like Natural Earth Data.
+
+Place this file (e.g., countries.geojson) inside the /public directory.
+
+Success Criteria: A running Next.js application with a blank homepage and /maps page. All dependencies are installed, and environment variables are configured.
+
+Phase 1: Interactive Map Interface
+
+Goal: Implement a fully interactive map as the primary user interface.
+
+Step 1: Create the Map Component
+
+Develop a client-side component ('use client') named InteractiveMap.tsx.
+
+This component will use the MapContainer from react-leaflet to render the base map.
+
+Configure the base map tile layer to use OpenStreetMap.
+
+Step 2: Render Geographic Boundaries
+
+Within the InteractiveMap component, use a useEffect hook to fetch the countries.geojson file from the /public directory.
+
+Use the GeoJSON component from react-leaflet to render the country outlines on the map.
+
+Step 3: Implement Map Interactivity
+
+Define an onEachFeature function that will be passed to the GeoJSON component. This function attaches event listeners to each country's map layer.
+
+Hover Effect: On mouseover, dynamically change the feature's style (e.g., increase fill opacity or change border color). On mouseout, revert the style to its original state. This provides immediate visual feedback.
+
+Click Action: On click, the function will:
+
+Extract the name of the clicked country from its GeoJSON properties.
+
+Call a state-setting function (passed down as a prop from the parent /maps page) to register the selected country globally for the page.
+
+Access the map instance to programmatically zoom and pan to fit the bounds of the selected country using map.fitBounds().
+
+Step 4: Implement Search Functionality
+
+Add a Shadcn Input component to the UI, likely overlaid on the map.
+
+On submitting a search query, make a fetch call to a free geocoding API like Nominatim (OpenStreetMap's geocoder).
+
+The API will return geographic coordinates (latitude, longitude) and a bounding box for the searched place.
+
+Use the map instance's flyTo() method to smoothly animate the map view to the returned coordinates.
+
+Success Criteria: A user can view a world map, see distinct country outlines, get visual feedback when hovering over a country, click a country to select it and zoom in, and search for any location worldwide.
+
+Phase 2: Backend Animation Engine
+
+Goal: Build a robust, asynchronous backend service capable of generating time-lapse animations from NASA Terra data.
+
+Step 1: Define the Data Source
+
+Identify the exact NASA GIBS (Global Imagery Browse Services) layer to be used. The primary candidate is MODIS_Terra_CorrectedReflectance_TrueColor.
+
+Document the WMTS (Web Map Tile Service) URL template. This template allows fetching specific map tiles by date, zoom level, and tile coordinates (X, Y).
+
+Step 2: Design the Asynchronous Job Architecture
+
+Create an in-memory store (a simple JavaScript Map object will suffice for local development) to track the status of animation jobs. Each job will have a unique ID and a status (processing, complete, failed).
+
+API Endpoint 1 (POST /api/animate/request):
+
+Accepts a boundingBox, startDate, and endDate.
+
+Generates a unique jobId.
+
+Stores the job in the in-memory store with status: 'processing'.
+
+Calls the core animation generation function without awaiting it.
+
+Immediately returns the jobId to the client.
+
+API Endpoint 2 (GET /api/animate/status):
+
+Accepts a jobId as a query parameter.
+
+Looks up the job in the store and returns its current status and, if complete, the URL of the generated animation file.
+
+Step 3: Implement the Core Animation Logic (createAnimation function)
+
+Sub-step 3.1: Tile Calculation: Write a utility function that takes a geographic bounding box and a zoom level, and calculates the exact list of tile coordinates (X, Y) needed to cover that area.
+
+Sub-step 3.2: Image Fetching: Create a loop that iterates through every date from startDate to endDate. Inside this loop, iterate through the list of required tile coordinates and download the corresponding JPG/PNG image from the GIBS WMTS endpoint. Save all images for one day into a temporary folder.
+
+Sub-step 3.3: Image Stitching: For each day, if multiple tiles were downloaded, use the sharp library to composite them into a single, seamless image frame. Save this frame with a sequential name (e.g., frame_001.png, frame_002.png).
+
+Sub-step 3.4: Video/GIF Generation: Once all frames are created, use the fluent-ffmpeg library to execute an FFmpeg command. This command will take the sequence of image frames as input and output a final animated GIF or MP4 file. The command should specify frame rate, resolution, and output path (e.g., /public/animations/{jobId}.gif).
+
+Sub-step 3.5: Job Completion & Cleanup: After FFmpeg finishes, update the job's status in the in-memory store to complete and record the final file URL. Delete the temporary folder containing the individual frames.
+
+Success Criteria: The backend can receive an animation request, process it in the background, and serve the final animated GIF via a status check endpoint.
+
+Phase 3: AI-Powered Event & Narrative Generation
+
+Goal: Integrate a Large Language Model (LLM) to dynamically generate relevant geographical events and narratives for a selected location.
+
+Step 1: Design the AI Service Module
+
+Create a dedicated file (e.g., /lib/aiService.ts) to encapsulate all interactions with the Google AI (Gemini) API. This keeps the API key and logic isolated.
+
+Step 2: Engineer the Master Prompt
+
+This is the most critical part of the AI integration. Craft a detailed prompt that instructs the AI to act as a specific persona (e.g., "a geoscientist analyst").
+
+The prompt must demand a response only in a structured JSON format.
+
+The prompt will specify the required fields for each event object: eventName (string), narrative (string, 2-3 sentences), eventType (e.g., "Wildfire", "Flood"), startDate (string, YYYY-MM-DD format), and endDate (string, YYYY-MM-DD format).
+
+Include a few-shot example in the prompt to guide the model's output format.
+
+Step 3: Create the Events API Endpoint (POST /api/events)
+
+This endpoint accepts a locationName in the request body.
+
+It calls the AI service module, passing the location name into the master prompt.
+
+It receives the response from the AI. It should include robust error handling to parse the JSON response. If the AI fails to return valid JSON, the endpoint should return a structured error.
+
+Upon success, it forwards the parsed array of event objects to the frontend client.
+
+Success Criteria: The frontend can send a location name (e.g., "Australia") to a backend endpoint and receive a structured JSON array of significant environmental events with narratives, ready for display.
+
+Phase 4: Frontend Integration and User Experience
+
+Goal: Combine the map, AI data, and animation engine into a seamless and intuitive user experience.
+
+Step 1: Develop the Main Page Layout (/app/maps/page.tsx)
+
+Create a two-panel layout: a side panel for information and controls, and the main area for the map.
+
+Manage the page's state, including the selectedLocation, the list of events, and the animationJobStatus.
+
+Step 2: Implement the Data Flow Logic
+
+When a user clicks a country on the map, update the selectedLocation state.
+
+Trigger a useEffect hook that observes changes to selectedLocation. When it changes, make a fetch call to the /api/events endpoint.
+
+While the event data is being fetched, display Shadcn Skeleton components in the side panel to indicate loading.
+
+Once the data arrives, store it in the events state and render it in the side panel.
+
+Step 3: Design the Event Display
+
+Use the Shadcn Accordion component to display the list of events. Each accordion trigger will show the eventName.
+
+The accordion content will display the AI-generated narrative and a "Generate Animation" button.
+
+Step 4: Implement the Animation Request and Polling Flow
+
+When a user clicks "Generate Animation" for an event:
+
+Disable the button and show a loading spinner.
+
+Extract the event's startDate, endDate, and the boundingBox of the selected location.
+
+Make a POST request to /api/animate/request with this data.
+
+Upon receiving the jobId, start a polling mechanism (e.g., using setInterval) that calls the /api/animate/status endpoint every 3 seconds.
+
+When the status response indicates "complete," clear the interval and display the animation.
+
+Display the final animation in a Shadcn Dialog (modal) for a focused viewing experience.
+
+Success Criteria: The entire user journey is functional: A user can select a country, see a list of AI-generated events, click a button to generate a custom animation for that event, and view the final product in a modal window.

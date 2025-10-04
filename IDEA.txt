@@ -1,0 +1,266 @@
+Project Name: TerraView
+
+Concept: TerraView is an interactive web application that allows users to explore significant environmental and geographical events across the globe through AI-synthesized narratives and on-demand satellite imagery animations. By selecting a location on a map, users can discover key events, understand their impact through AI-generated stories, and visualize them using time-lapse animations created from NASA's Terra satellite data.
+
+Clarifying Questions & Assumptions (Addressing the Gray Areas)
+
+Before diving into the plan, let's clarify the most complex parts of your request:
+
+Gray Area: "Live AI Synthesis of Events"
+
+Challenge: Large Language Models (LLMs) like Gemini are excellent at generating text but are not reliable sources for precise dates and geographic coordinates (bounding boxes) of scientific events. They can hallucinate or provide fuzzy data.
+
+Proposed Solution: We will use a hybrid approach. The AI (LLM) will be used for its strength: storytelling. The factual data (event name, date range, approximate location) will be treated as something the AI discovers and structures for us. The backend will be responsible for translating the location name into a precise bounding box for the animation engine.
+
+Assumption: We will craft a very specific prompt for the AI to return data in a structured JSON format, but we acknowledge this is for a demo/local project. A production system would use a curated event database (like a geological survey API) and only use the AI to enrich the narrative.
+
+Gray Area: "Live Animation Creation"
+
+Challenge: Fetching multiple satellite images and stitching them into a video/GIF is computationally intensive. A "live" process will not be instant; it could take anywhere from 15 seconds to several minutes, depending on the animation's length and resolution.
+
+Proposed Solution: The system will be designed asynchronously. When a user requests an animation, the backend will start a processing job. The frontend will show a loading state (e.g., "Generating your animation...") and poll the server for the result. This provides a good user experience without freezing the interface.
+
+Assumption: Users will be accepting of a short wait time for a custom-generated animation.
+
+Gray Area: "General Animation"
+
+Challenge: This is subjective. What does a "general animation" of a country show?
+
+Proposed Solution: A fantastic and visually compelling default is a one-year seasonal time-lapse. This will show the "breathing" of the planet—snow cover receding, vegetation turning green in spring and brown in autumn. It's a great showcase of Terra's long-term monitoring capabilities.
+
+Assumption: A one-year seasonal animation (e.g., from the previous year) is a suitable "general animation."
+
+Technology Stack
+
+Framework: Next.js 14+ (App Router for modern, server-component driven architecture)
+
+Language: TypeScript (For type safety and better developer experience)
+
+UI Library: Shadcn UI (For beautiful, accessible, and composable components)
+
+Map Library: Leaflet with React-Leaflet (Lightweight, mature, and easy to integrate with React)
+
+Map Tiles: OpenStreetMap (Free and open base map layer)
+
+Backend Environment: Node.js (Provided by Next.js API Routes)
+
+AI Integration: Google AI SDK (for Gemini) or openai package.
+
+Animation Engine: FFmpeg (The industry standard for video/audio processing, run on the server)
+
+NASA Data Source: NASA GIBS (Global Imagery Browse Services) via its WMTS API. This is the best source for on-demand image tiles from the Terra satellite.
+
+System Architecture
+
+Frontend (Next.js Client Components):
+
+Renders the map using React-Leaflet.
+
+Manages user interactions (hover, click, search).
+
+Makes API calls to its own Next.js Backend.
+
+Displays event lists, narratives, and the final animations.
+
+Handles loading states while the backend works.
+
+Backend (Next.js API Routes / Server Components):
+
+/api/events: Receives a location name. Calls the AI model to get a list of significant events.
+
+/api/animate/request: Receives a location (bounding box) and date range. It starts the animation generation process and immediately returns a jobId.
+
+/api/animate/status?jobId={id}: The frontend polls this endpoint to check if the animation is ready. Returns { status: 'processing' } or { status: 'complete', url: '/animations/animation.gif' }.
+
+Animation Service (Server-side module): The core logic that fetches images from NASA GIBS and uses FFmpeg to create the animation.
+
+External Services:
+
+Geocoding API: To convert place names ("Paris") into coordinates (latitude/longitude). OpenStreetMap's Nominatim is a good free option.
+
+LLM API (Gemini): To generate event narratives and structured data.
+
+NASA GIBS API: To download the daily satellite image tiles from the Terra/MODIS instrument.
+
+Phase 1: Map Implementation Plan (The Core Interface)
+
+Goal: Create a fully interactive map where users can search for, hover over, and select countries, states, and cities.
+
+Setup Next.js & Dependencies:
+
+code
+Bash
+download
+content_copy
+expand_less
+npx create-next-app@latest terrascope --typescript --tailwind --eslint
+cd terrascope
+npm install leaflet react-leaflet shadcn-ui
+npm install -D @types/leaflet
+npx shadcn-ui@latest init
+
+Get Boundary Data:
+
+Download GeoJSON files for world countries and (if desired) states. A great source is Natural Earth Data. Place these files in your /public directory.
+
+Create the Map Component (/components/Map.tsx):
+
+This component will be client-side ('use client').
+
+Use react-leaflet to render a <MapContainer>. Set the base tile layer to OpenStreetMap.
+
+Load the country GeoJSON data using a useEffect hook and the fetch API.
+
+Use the <GeoJSON> component from react-leaflet to display the country outlines.
+
+Interactivity:
+
+onEachFeature function: This is the key to interactivity. Inside this function, you'll add event listeners to each country's layer.
+
+Hover: On mouseover, change the feature's style (e.g., fill color). On mouseout, reset it.
+
+Click: On click, get the country's name, update a state variable in your main page component, and perhaps zoom the map to that country's bounds (map.fitBounds(...)).
+
+Implement Search:
+
+Add an Input component from Shadcn UI on top of the map.
+
+When the user searches, call a geocoding API (like Nominatim) to get the coordinates and bounding box for the location.
+
+Use the map instance to fly to these coordinates (map.flyTo(...)).
+
+Phase 2: Animation Engine Plan (The Core Logic)
+
+Goal: Build a backend service that can generate a time-lapse animation for a given area and date range using Terra data.
+
+Data Source - NASA GIBS:
+
+We will use the Terra/MODIS "Corrected Reflectance (True Color)" layer. It provides daily global imagery.
+
+The API endpoint is a templated URL (WMTS - Web Map Tile Service) where you can insert the date, zoom level, and tile coordinates.
+
+Example URL template: https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{Date}/GoogleMapsCompatible_Level9/{Zoom}/{Y}/{X}.jpg
+
+Setup Backend Environment:
+
+Install FFmpeg on your local machine and ensure it's accessible in your system's PATH.
+
+Install a Node.js wrapper for FFmpeg: npm install fluent-ffmpeg.
+
+Create the Backend API Route (/app/api/animate/request/route.ts):
+
+This route will accept a POST request with { boundingBox, startDate, endDate }.
+
+It will generate a unique jobId (e.g., using crypto.randomUUID()).
+
+It will not await the animation process. Instead, it will call the animation function in the background (fire-and-forget) and immediately return the jobId to the user.
+
+// Do NOT await this call
+createAnimation({ jobId, boundingBox, startDate, endDate });
+return NextResponse.json({ jobId });
+
+Implement the createAnimation Function (The Engine):
+
+Step 1: Calculate Date & Tile List: Determine the list of all dates in the range. Based on the bounding box, calculate which map tiles are needed to cover the area.
+
+Step 2: Download Images: Loop through each date. For each date, construct the GIBS URL for each required tile and download the images. Save them to a temporary directory like /tmp/{jobId}/.
+
+Step 3: Stitch Tiles (Optional but recommended): If an area needs multiple tiles, use a library like sharp (npm install sharp) to stitch them together into a single frame for each day.
+
+Step 4: Create Animation with FFmpeg:
+
+Use fluent-ffmpeg to process the sequence of daily frames.
+
+Command: ffmpeg -framerate 10 -i /tmp/{jobId}/frame_%d.jpg -vf "scale=1280:-1" /public/animations/{jobId}.gif
+
+This command takes all frames, sets the frame rate, scales them, and outputs a GIF.
+
+Step 5: Update Job Status: Store the job status somewhere simple for a local project (e.g., a simple in-memory object). When done, update the status to "complete" and store the final file path.
+
+Create the Status Check Route (/app/api/animate/status/route.ts):
+
+Accepts a GET request with a jobId query parameter.
+
+Looks up the job's status in the in-memory store.
+
+Returns the status to the frontend.
+
+Phase 3: AI Integration Plan (The Storytelling)
+
+Goal: Use an LLM to generate a list of significant events for a selected location.
+
+Setup AI SDK:
+
+npm install @google/generative-ai
+
+Get an API key from Google AI Studio. Store it in your .env.local file.
+
+Create the Event API Route (/app/api/events/route.ts):
+
+Accepts a POST request with { locationName }.
+
+Prompt Engineering: This is the most important step. Create a detailed prompt.
+
+code
+JavaScript
+download
+content_copy
+expand_less
+const prompt = `
+  You are a geoscientist data analyst. Based on the location "${locationName}", list up to 5 of the most significant environmental or geographical events that have occurred there since 1999.
+  Events should be things visible from space, like wildfires, floods, volcanic eruptions, droughts, or major urban growth.
+  For each event, provide a short, compelling narrative (2-3 sentences).
+  You MUST respond in a valid JSON format as an array of objects. Do not include any text outside of the JSON.
+  Each object must have the following keys: "eventName", "narrative", "eventType", "startDate" (YYYY-MM-DD), "endDate" (YYYY-MM-DD).
+
+  Example response for 'California':
+  [
+    {
+      "eventName": "The 2018 Camp Fire",
+      "narrative": "One of California's deadliest and most destructive wildfires. The fire caused immense devastation, and its massive smoke plume was visible from space, impacting air quality across the state.",
+      "eventType": "Wildfire",
+      "startDate": "2018-11-08",
+      "endDate": "2018-11-25"
+    }
+  ]
+`;
+
+Send this prompt to the Gemini API.
+
+Parse the JSON response and return it to the frontend.
+
+Phase 4: UI/UX and Frontend Development
+
+Goal: Create a polished user interface that ties all the pieces together.
+
+Homepage (/app/page.tsx):
+
+A simple, elegant landing page.
+
+Use Shadcn Card and Button components to explain what the project does and link to the /maps page.
+
+Maps Page (/app/maps/page.tsx):
+
+Layout: Use a two-panel layout. A fixed-width side panel on the left and the map on the right.
+
+Side Panel Component:
+
+Initially shows the search bar.
+
+When a location is selected, its title appears.
+
+It then makes a call to /api/events. While loading, show a Skeleton component from Shadcn.
+
+Display the returned events in an Accordion component. Each accordion item shows the event name. When opened, it reveals the AI narrative and a "Generate Animation" button.
+
+Animation Flow:
+
+When the "Generate Animation" button is clicked, it calls the /api/animate/request endpoint.
+
+The button is disabled, and a Spinner is shown with text like "Generating animation... this may take a moment."
+
+The component starts polling the /api/animate/status endpoint every 2-3 seconds.
+
+When the status is "complete," the polling stops. A Dialog component (modal) from Shadcn pops up, displaying the generated GIF.
+
+This comprehensive plan provides a clear roadmap. Starting with the map interface, then building the powerful animation engine, and finally layering in the AI storytelling will allow you to build this complex application step-by-step.
