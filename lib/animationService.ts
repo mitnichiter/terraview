@@ -103,8 +103,14 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
           downloadPromises.push(downloadImage(url, imagePath));
         }
       }
-      await Promise.all(downloadPromises);
-      console.log(`[${jobId}] Downloaded ${downloadPromises.length} tiles for ${date}`);
+      // Use Promise.allSettled to ensure all downloads complete, even if some fail.
+      // This prevents the race condition where cleanup starts before all operations are done.
+      const results = await Promise.allSettled(downloadPromises);
+      const failedDownloads = results.filter(r => r.status === 'rejected').length;
+      if (failedDownloads > 0) {
+        console.warn(`[${jobId}] ${failedDownloads} tiles failed to download for ${date}. They will be treated as blank tiles.`);
+      }
+      console.log(`[${jobId}] Finished processing downloads for ${date}`);
 
       // b. Stitch the downloaded tiles into a single frame for the day
       const compositeOperations = [];
