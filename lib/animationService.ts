@@ -79,6 +79,24 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
     const bottomRight = lonLatToTile(maxLon, minLat, ZOOM_LEVEL);
 
     const dates = getDatesInRange(startDate, endDate);
+
+    // --- CRITICAL SAFEGUARDS ---
+    const MAX_DAYS = 31; // Limit animations to one month
+    const MAX_TILES = 2000; // Limit total images to prevent server overload
+
+    if (dates.length > MAX_DAYS) {
+      throw new Error(`Date range too large. Please select a period of ${MAX_DAYS} days or less.`);
+    }
+
+    const tileXRange = (bottomRight.x - topLeft.x + 1);
+    const tileYRange = (bottomRight.y - topLeft.y + 1);
+    const totalTiles = tileXRange * tileYRange * dates.length;
+
+    if (totalTiles > MAX_TILES) {
+      throw new Error(`The selected area and date range is too large (${totalTiles} tiles). Please select a smaller region or a shorter period.`);
+    }
+    // --- END SAFEGUARDS ---
+
     const imageUrls: { date: string, url: string, x: number, y: number }[] = [];
 
     for (const date of dates) {
@@ -156,7 +174,26 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
     jobs.set(jobId, { status: 'failed', error: (error as Error).message });
   } finally {
     // 6. Cleanup
-    await fs.rm(jobDir, { recursive: true, force: true });
-    console.log(`[${jobId}] Cleanup complete.`);
+    // Use a more robust cleanup with retries to handle potential race conditions
+    // where file handles might not be released immediately.
+    let attempts = 0;
+    const maxAttempts = 5;
+    while (attempts < maxAttempts) {
+      try {
+        await fs.rm(jobDir, { recursive: true, force: true });
+        console.log(`[${jobId}] Cleanup complete.`);
+        break; // Exit loop on success
+      } catch (error) {
+        attempts++;
+        if (attempts >= maxAttempts) {
+          console.error(`[${jobId}] Cleanup failed after ${maxAttempts} attempts:`, error);
+          // Don't re-throw, as we don't want to crash the server over a cleanup failure.
+          // The folder will be orphaned, but the server stays up.
+          break;
+        }
+        console.warn(`[${jobId}] Cleanup attempt ${attempts} failed. Retrying in 1 second...`);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
+      }
+    }
   }
 }
