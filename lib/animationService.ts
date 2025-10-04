@@ -7,41 +7,13 @@ import path from 'path';
 const GIBS_URL_TEMPLATE = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/{date}/GoogleMapsCompatible_Level9/9/{y}/{x}.jpg';
 const TEMP_DIR = path.join(process.cwd(), 'tmp');
 const ZOOM_LEVEL = 9;
+const BATCH_GRID_DIMENSION = 16; // Process in 16x16 tile batches
 
 interface AnimationParams {
   jobId: string;
   boundingBox: [number, number, number, number]; // [minLon, minLat, maxLon, maxLat]
   startDate: string;
   endDate: string;
-}
-
-// Helper to download an image, creating a blank tile on 404
-async function downloadImage(url: string, filepath: string) {
-  try {
-    // Increase the timeout to 30 seconds to handle slow responses from NASA's server
-    const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
-    if (!response.ok) {
-      if (response.status === 404) {
-        console.warn(`Image not found (404): ${url}. Creating a blank tile.`);
-        // Create a blank 512x512 black tile to avoid breaking the animation
-        await sharp({
-          create: {
-            width: 512,
-            height: 512,
-            channels: 3,
-            background: { r: 0, g: 0, b: 0 }
-          }
-        }).jpeg().toFile(filepath);
-        return;
-      }
-      throw new Error(`Failed to download ${url}: ${response.statusText}`);
-    }
-    const buffer = await response.arrayBuffer();
-    await fs.writeFile(filepath, Buffer.from(buffer));
-  } catch (error) {
-    console.error(`Error in downloadImage for ${url}:`, error);
-    throw error; // Re-throw to be caught by the main try-catch block
-  }
 }
 
 // Helper to convert longitude/latitude to tile coordinates
@@ -66,102 +38,146 @@ function getDatesInRange(startDate: string, endDate: string): string[] {
   return dates;
 }
 
+// Helper to download an image, creating a blank tile on 404
+async function downloadImage(url: string, filepath: string) {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (!response.ok) {
+      if (response.status === 404) {
+        await sharp({ create: { width: 512, height: 512, channels: 3, background: { r: 0, g: 0, b: 0 } } }).jpeg().toFile(filepath);
+        return;
+      }
+      throw new Error(`Failed to download ${url}: ${response.statusText}`);
+    }
+    const buffer = await response.arrayBuffer();
+    await fs.writeFile(filepath, Buffer.from(buffer));
+  } catch (error) {
+    console.error(`Error in downloadImage for ${url}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Creates a video clip for a small batch of tiles.
+ */
+async function createBatchVideo(jobId: string, batchJobDir: string, tileXCoords: number[], tileYCoords: number[], dates: string[]): Promise<string> {
+  const frameWidth = tileXCoords.length * 512;
+  const frameHeight = tileYCoords.length * 512;
+
+  for (const [dateIndex, date] of dates.entries()) {
+    const dailyTileDir = path.join(batchJobDir, date);
+    await fs.mkdir(dailyTileDir, { recursive: true });
+
+    const downloadPromises = [];
+    for (const y of tileYCoords) {
+      for (const x of tileXCoords) {
+        const url = GIBS_URL_TEMPLATE.replace('{date}', date).replace('{x}', x.toString()).replace('{y}', y.toString());
+        const imagePath = path.join(dailyTileDir, `tile_${x}_${y}.jpg`);
+        downloadPromises.push(downloadImage(url, imagePath));
+      }
+    }
+    await Promise.allSettled(downloadPromises);
+
+    const compositeOperations = [];
+    for (const y of tileYCoords) {
+      for (const x of tileXCoords) {
+        const tilePath = path.join(dailyTileDir, `tile_${x}_${y}.jpg`);
+        const xOffset = (x - tileXCoords[0]) * 512;
+        const yOffset = (y - tileYCoords[0]) * 512;
+        compositeOperations.push({ input: tilePath, left: xOffset, top: yOffset });
+      }
+    }
+
+    const framePath = path.join(batchJobDir, `frame_${String(dateIndex).padStart(4, '0')}.jpg`);
+    await sharp({ create: { width: frameWidth, height: frameHeight, channels: 3, background: { r: 0, g: 0, b: 0 } } })
+      .composite(compositeOperations)
+      .toFile(framePath);
+
+    await fs.rm(dailyTileDir, { recursive: true, force: true });
+  }
+
+  const batchClipPath = path.join(batchJobDir, 'batch_clip.mp4');
+  await new Promise<void>((resolve, reject) => {
+    ffmpeg(path.join(batchJobDir, 'frame_%04d.jpg'))
+      .inputOptions(['-framerate 10'])
+      .outputOptions(['-c:v libx264', '-pix_fmt yuv420p'])
+      .on('end', resolve)
+      .on('error', reject)
+      .save(batchClipPath);
+  });
+
+  return batchClipPath;
+}
+
 export async function createAnimation({ jobId, boundingBox, startDate, endDate }: AnimationParams) {
   const jobDir = path.join(TEMP_DIR, jobId);
-
   try {
     await fs.mkdir(jobDir, { recursive: true });
-    console.log(`[${jobId}] Starting animation generation...`);
+    console.log(`[${jobId}] Starting animation generation with batch processing...`);
 
-    // --- Day-by-Day Processing Logic ---
-
-    // 1. Calculate constant values outside the loop
     const [minLon, minLat, maxLon, maxLat] = boundingBox;
     const topLeft = lonLatToTile(minLon, maxLat, ZOOM_LEVEL);
     const bottomRight = lonLatToTile(maxLon, minLat, ZOOM_LEVEL);
     const dates = getDatesInRange(startDate, endDate);
 
-    const tileXCoords = Array.from({ length: bottomRight.x - topLeft.x + 1 }, (_, i) => topLeft.x + i);
-    const tileYCoords = Array.from({ length: bottomRight.y - topLeft.y + 1 }, (_, i) => topLeft.y + i);
-    const gridWidth = tileXCoords.length;
-    const gridHeight = tileYCoords.length;
+    const fullTileXCoords = Array.from({ length: bottomRight.x - topLeft.x + 1 }, (_, i) => topLeft.x + i);
+    const fullTileYCoords = Array.from({ length: bottomRight.y - topLeft.y + 1 }, (_, i) => topLeft.y + i);
 
-    // --- FINAL SAFEGUARD for frame size ---
-    const MAX_GRID_DIMENSION = 32; // Limit to a 32x32 grid of tiles per day
-    if (gridWidth > MAX_GRID_DIMENSION || gridHeight > MAX_GRID_DIMENSION) {
-      throw new Error(`The selected geographical area is too large (grid size: ${gridWidth}x${gridHeight}). Please select a smaller region.`);
-    }
-    // ---
+    const numBatchCols = Math.ceil(fullTileXCoords.length / BATCH_GRID_DIMENSION);
+    const numBatchRows = Math.ceil(fullTileYCoords.length / BATCH_GRID_DIMENSION);
 
-    const frameWidth = gridWidth * 512;
-    const frameHeight = gridHeight * 512;
+    console.log(`[${jobId}] Total area divided into ${numBatchCols}x${numBatchRows} batches.`);
 
-    // 2. Process each day sequentially to keep memory usage low
-    for (const [dateIndex, date] of dates.entries()) {
-      const dailyJobDir = path.join(jobDir, date);
-      await fs.mkdir(dailyJobDir, { recursive: true });
-      console.log(`[${jobId}] Processing Day ${dateIndex + 1}/${dates.length} (${date})`);
+    const batchClipPaths: string[][] = Array.from({ length: numBatchRows }, () => []);
 
-      // a. Download tiles for the current day
-      const downloadPromises = [];
-      for (const y of tileYCoords) {
-        for (const x of tileXCoords) {
-          const url = GIBS_URL_TEMPLATE.replace('{date}', date).replace('{x}', x.toString()).replace('{y}', y.toString());
-          const imagePath = path.join(dailyJobDir, `tile_${x}_${y}.jpg`);
-          downloadPromises.push(downloadImage(url, imagePath));
-        }
+    for (let row = 0; row < numBatchRows; row++) {
+      for (let col = 0; col < numBatchCols; col++) {
+        console.log(`[${jobId}] Processing batch (${row + 1}, ${col + 1}) of ${numBatchRows}x${numBatchCols}`);
+
+        const batchXStart = col * BATCH_GRID_DIMENSION;
+        const batchYStart = row * BATCH_GRID_DIMENSION;
+        const batchXCoords = fullTileXCoords.slice(batchXStart, batchXStart + BATCH_GRID_DIMENSION);
+        const batchYCoords = fullTileYCoords.slice(batchYStart, batchYStart + BATCH_GRID_DIMENSION);
+
+        const batchJobDir = path.join(jobDir, `batch_${row}_${col}`);
+        await fs.mkdir(batchJobDir, { recursive: true });
+
+        const clipPath = await createBatchVideo(jobId, batchJobDir, batchXCoords, batchYCoords, dates);
+        batchClipPaths[row][col] = clipPath;
       }
-      // Use Promise.allSettled to ensure all downloads complete, even if some fail.
-      // This prevents the race condition where cleanup starts before all operations are done.
-      const results = await Promise.allSettled(downloadPromises);
-      const failedDownloads = results.filter(r => r.status === 'rejected').length;
-      if (failedDownloads > 0) {
-        console.warn(`[${jobId}] ${failedDownloads} tiles failed to download for ${date}. They will be treated as blank tiles.`);
-      }
-      console.log(`[${jobId}] Finished processing downloads for ${date}`);
-
-      // b. Stitch the downloaded tiles into a single frame for the day
-      const compositeOperations = [];
-      for (const y of tileYCoords) {
-        for (const x of tileXCoords) {
-          const tilePath = path.join(dailyJobDir, `tile_${x}_${y}.jpg`);
-          const xOffset = (x - tileXCoords[0]) * 512;
-          const yOffset = (y - tileYCoords[0]) * 512;
-          compositeOperations.push({ input: tilePath, left: xOffset, top: yOffset });
-        }
-      }
-
-      const framePath = path.join(jobDir, `frame_${String(dateIndex).padStart(4, '0')}.jpg`);
-      await sharp({ create: { width: frameWidth, height: frameHeight, channels: 3, background: { r: 0, g: 0, b: 0 } } })
-        .composite(compositeOperations)
-        .toFile(framePath);
-      console.log(`[${jobId}] Created frame for ${date}`);
-
-      // c. Clean up the daily tiles immediately to save disk space
-      await fs.rm(dailyJobDir, { recursive: true, force: true });
     }
 
-    // 3. Create the final animation from the daily frames
-    console.log(`[${jobId}] Creating final animation from ${dates.length} frames...`);
+    console.log(`[${jobId}] All batch clips created. Now stitching into final animation...`);
+    const finalComplexFilter: any[] = [];
+    let inputIndex = 0;
+    for (let row = 0; row < numBatchRows; row++) {
+      for (let col = 0; col < numBatchCols; col++) {
+        finalComplexFilter.push(`[${inputIndex}:v]`);
+        inputIndex++;
+      }
+      finalComplexFilter.push(`hstack=${numBatchCols}[row${row}];`);
+    }
+
+    for (let row = 0; row < numBatchRows; row++) {
+        finalComplexFilter.push(`[row${row}]`);
+    }
+    finalComplexFilter.push(`vstack=${numBatchRows}[v]`);
+
+    const ffmpegCommand = ffmpeg();
+    batchClipPaths.flat().forEach(p => ffmpegCommand.input(p));
+
     const animationOutputPath = path.join(process.cwd(), 'public', 'animations', `${jobId}.gif`);
     await fs.mkdir(path.dirname(animationOutputPath), { recursive: true });
 
     await new Promise<void>((resolve, reject) => {
-      ffmpeg(path.join(jobDir, 'frame_%04d.jpg'))
-        .inputOptions(['-framerate 10'])
-        .outputOptions(['-vf scale=1024:-1'])
-        .on('end', () => {
-          console.log(`[${jobId}] FFmpeg processing finished.`);
-          resolve();
-        })
-        .on('error', (err) => {
-          console.error(`[${jobId}] FFmpeg error:`, err);
-          reject(err);
-        })
+      ffmpegCommand
+        .complexFilter(finalComplexFilter.join(''))
+        .outputOptions('-map "[v]"')
+        .on('end', resolve)
+        .on('error', reject)
         .save(animationOutputPath);
     });
 
-    // 4. Update Job Status on Success
     const animationPath = `/animations/${jobId}.gif`;
     jobs.set(jobId, { status: 'complete', url: animationPath });
     console.log(`[${jobId}] Animation complete: ${animationPath}`);
@@ -170,7 +186,6 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
     console.error(`[${jobId}] Animation failed:`, error);
     jobs.set(jobId, { status: 'failed', error: (error as Error).message });
   } finally {
-    // 5. Final Cleanup (remove the main job directory with the frames)
     try {
       await fs.rm(jobDir, { recursive: true, force: true });
       console.log(`[${jobId}] Final cleanup complete.`);
