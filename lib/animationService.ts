@@ -38,25 +38,40 @@ function getDatesInRange(startDate: string, endDate: string): string[] {
   return dates;
 }
 
-// Helper to download an image, creating a blank tile on 404
+// Helper to download an image with retries, creating a blank tile on failure
 async function downloadImage(url: string, filepath: string) {
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
-    if (!response.ok) {
+  const maxRetries = 3;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      if (response.ok) {
+        const buffer = await response.arrayBuffer();
+        await fs.writeFile(filepath, Buffer.from(buffer));
+        return; // Success
+      }
       if (response.status === 404) {
+        // 404 is a definitive "not found", no need to retry.
+        console.warn(`Image not found (404) for ${url}. Creating blank tile.`);
         await sharp({ create: { width: 512, height: 512, channels: 3, background: { r: 0, g: 0, b: 0 } } }).jpeg().toFile(filepath);
         return;
       }
-      throw new Error(`Failed to download ${url}: ${response.statusText}`);
+      // For other server errors (5xx), we'll retry.
+      console.warn(`Attempt ${i + 1} for ${url} failed with status ${response.status}. Retrying...`);
+    } catch (error) {
+      // For network errors (timeouts, etc.), we'll retry.
+      if (i < maxRetries - 1) {
+        console.warn(`Attempt ${i + 1} for ${url} failed: ${(error as Error).message}. Retrying...`);
+      }
     }
-    const buffer = await response.arrayBuffer();
-    await fs.writeFile(filepath, Buffer.from(buffer));
-  } catch (error) {
-    // If ANY error occurs during download (timeout, network issue, etc.),
-    // log it and create a blank tile to prevent the entire job from failing.
-    console.warn(`Download failed for ${url}: ${(error as Error).message}. Creating a blank tile.`);
-    await sharp({ create: { width: 512, height: 512, channels: 3, background: { r: 0, g: 0, b: 0 } } }).jpeg().toFile(filepath);
+    // Wait a bit before the next retry
+    if (i < maxRetries - 1) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
   }
+
+  // If all retries fail, create a blank tile.
+  console.error(`All ${maxRetries} download attempts failed for ${url}. Creating a blank tile.`);
+  await sharp({ create: { width: 512, height: 512, channels: 3, background: { r: 0, g: 0, b: 0 } } }).jpeg().toFile(filepath);
 }
 
 /**
