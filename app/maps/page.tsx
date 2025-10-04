@@ -207,7 +207,7 @@ export default function MapsPage() {
 
       {/* Animation Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={closeDialog}>
-        <DialogContent>
+        <DialogContent className="z-[5000]">
           <DialogHeader>
             <DialogTitle>Generating Animation</DialogTitle>
           </DialogHeader>

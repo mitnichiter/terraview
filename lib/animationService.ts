@@ -18,7 +18,8 @@ interface AnimationParams {
 // Helper to download an image, creating a blank tile on 404
 async function downloadImage(url: string, filepath: string) {
   try {
-    const response = await fetch(url);
+    // Increase the timeout to 30 seconds to handle slow responses from NASA's server
+    const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
     if (!response.ok) {
       if (response.status === 404) {
         console.warn(`Image not found (404): ${url}. Creating a blank tile.`);
