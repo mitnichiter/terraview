@@ -169,19 +169,20 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
     const ffmpegCommand = ffmpeg();
     batchClipPaths.flat().forEach(p => ffmpegCommand.input(p));
 
-    const animationOutputPath = path.join(process.cwd(), 'public', 'animations', `${jobId}.gif`);
+    const animationOutputPath = path.join(process.cwd(), 'public', 'animations', `${jobId}.mp4`);
     await fs.mkdir(path.dirname(animationOutputPath), { recursive: true });
 
     await new Promise<void>((resolve, reject) => {
       ffmpegCommand
         .complexFilter(finalComplexFilter.join(''))
-        // The -map option is not needed here, as the complex filter defines the final output stream [v]
+        // Use libx264 for MP4 encoding, the standard for web video.
+        .outputOptions(['-c:v libx264', '-pix_fmt yuv420p'])
         .on('end', resolve)
         .on('error', reject)
         .save(animationOutputPath);
     });
 
-    const animationPath = `/animations/${jobId}.gif`;
+    const animationPath = `/animations/${jobId}.mp4`;
     jobs.set(jobId, { status: 'complete', url: animationPath });
     console.log(`[${jobId}] Animation complete: ${animationPath}`);
 
