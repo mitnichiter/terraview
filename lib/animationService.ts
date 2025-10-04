@@ -174,7 +174,7 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
     await new Promise<void>((resolve, reject) => {
       ffmpegCommand
         .complexFilter(finalComplexFilter.join(''))
-        .outputOptions('-map "[v]"')
+        // The -map option is not needed here, as the complex filter defines the final output stream [v]
         .on('end', resolve)
         .on('error', reject)
         .save(animationOutputPath);
