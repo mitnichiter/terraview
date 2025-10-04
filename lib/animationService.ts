@@ -166,17 +166,27 @@ export async function createAnimation({ jobId, boundingBox, startDate, endDate }
     // After stacking all rows, add a final scaling filter to ensure the output is a reasonable size.
     finalComplexFilter.push(`vstack=${numBatchRows},scale=1024:-1[v]`);
 
-    const ffmpegCommand = ffmpeg();
-    batchClipPaths.flat().forEach(p => ffmpegCommand.input(p));
-
-    const animationOutputPath = path.join(process.cwd(), 'public', 'animations', `${jobId}.mp4`);
-    await fs.mkdir(path.dirname(animationOutputPath), { recursive: true });
+    // --- Pass 1: Stitch all batch clips into a single high-resolution video ---
+    console.log(`[${jobId}] Pass 1: Stitching batch clips into high-resolution intermediate video...`);
+    const intermediatePath = path.join(jobDir, 'stitched_unscaled.mp4');
+    const stitchCommand = ffmpeg();
+    batchClipPaths.flat().forEach(p => stitchCommand.input(p));
 
     await new Promise<void>((resolve, reject) => {
-      ffmpegCommand
+      stitchCommand
         .complexFilter(finalComplexFilter.join(''))
-        // Use libx264 for MP4 encoding, the standard for web video.
         .outputOptions(['-c:v libx264', '-pix_fmt yuv420p'])
+        .on('end', resolve)
+        .on('error', reject)
+        .save(intermediatePath);
+    });
+
+    // --- Pass 2: Scale down the high-resolution video to a web-friendly size ---
+    console.log(`[${jobId}] Pass 2: Scaling intermediate video to final size...`);
+    const animationOutputPath = path.join(process.cwd(), 'public', 'animations', `${jobId}.mp4`);
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(intermediatePath)
+        .outputOptions(['-vf scale=1024:-1', '-c:v libx264', '-pix_fmt yuv420p'])
         .on('end', resolve)
         .on('error', reject)
         .save(animationOutputPath);
