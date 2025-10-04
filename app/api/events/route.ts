@@ -11,8 +11,10 @@ export async function POST(request: Request) {
 
     const aiResponse = await getAiGeneratedEvents(locationName);
 
-    // The AI is prompted to return a raw JSON string, so we parse it here.
-    const events = JSON.parse(aiResponse);
+    // The AI is prompted to return a raw JSON string, but sometimes includes markdown.
+    // We'll clean the response to ensure it's valid JSON.
+    const cleanedResponse = aiResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+    const events = JSON.parse(cleanedResponse);
 
     return NextResponse.json(events);
   } catch (error) {
