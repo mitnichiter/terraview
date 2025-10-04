@@ -13,7 +13,8 @@ if (!process.env.GOOGLE_GEMINI_API_KEY) {
  * @returns A promise that resolves to a string containing a JSON array of events.
  */
 export async function getAiGeneratedEvents(locationName: string): Promise<string> {
-  const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+  // Use a more recent and available model. "gemini-1.5-flash-latest" is a great choice for speed and capability.
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
   const prompt = `
     You are a geoscientist data analyst. Based on the location "${locationName}", list up to 5 of the most significant environmental or geographical events that have occurred there since 1999.
