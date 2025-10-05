@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { ee } from '@/lib/earthEngineService';
+import { ee, initializeGee } from '@/lib/earthEngineService';
 import * as recipes from '@/lib/animationRecipes';
 
 /**
@@ -29,6 +29,9 @@ function getVideoUrl(collection: ee.ImageCollection, params: object): Promise<st
 
 export async function POST(request: Request) {
   try {
+    // Ensure GEE is initialized before making any API calls
+    await initializeGee();
+
     const { boundingBox, startDate, endDate, recipeName } = await request.json();
 
     if (!boundingBox || !startDate || !endDate || !recipeName) {
