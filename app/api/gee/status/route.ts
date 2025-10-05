@@ -31,7 +31,13 @@ export async function GET(request: Request) {
       });
     });
 
-    const status = (taskStatus as any).state;
+    const status = (taskStatus as any)?.state;
+
+    // If the state is not yet available, treat it as 'running' to allow polling to continue.
+    if (!status) {
+      return NextResponse.json({ status: 'running' });
+    }
+
     let response: any = { status: status.toLowerCase() }; // e.g., 'running', 'completed'
 
     if (status === 'COMPLETED') {
