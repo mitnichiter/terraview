@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
-import { ee, storage } from '@/lib/earthEngineService';
+import { ee } from '@/lib/earthEngineService';
 import * as recipes from '@/lib/animationRecipes';
-import { jobs } from '@/lib/jobStore'; // We'll reuse our simple job store for mapping our ID to GEE's task ID.
-import crypto from 'crypto';
+import { promisify } from 'util';
 
-// The name of your Google Cloud Storage bucket
-const BUCKET_NAME = 'terrascope-animations'; // IMPORTANT: Replace with your bucket name if different
+// Promisify the GEE get video thumb URL function
+const getVideoThumbURL = promisify(ee.ImageCollection.prototype.getVideoThumbURL);
 
 export async function POST(request: Request) {
   try {
@@ -15,7 +14,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
     }
 
-    // Find the correct recipe function by name
     const recipeFunction = (recipes as any)[recipeName];
     if (typeof recipeFunction !== 'function') {
       return NextResponse.json({ error: `Invalid recipe name: ${recipeName}` }, { status: 400 });
@@ -23,45 +21,33 @@ export async function POST(request: Request) {
 
     const eeBoundingBox = ee.Geometry.Rectangle(boundingBox);
 
-    // Get the styled image collection from the recipe
     const videoCollection = recipeFunction({
       boundingBox: eeBoundingBox,
       startDate,
       endDate,
     });
 
-    const videoFileName = `${recipeName}_${Date.now()}`;
-
-    // Create the GEE export task
-    const task = ee.batch.Export.video.toCloudStorage({
-      collection: videoCollection,
-      description: `Export for job ${videoFileName}`,
-      bucket: BUCKET_NAME,
-      fileNamePrefix: videoFileName,
-      framesPerSecond: 10,
-      dimensions: 720, // 720p resolution
+    // Define the parameters for the video thumbnail
+    const videoParams = {
+      dimensions: 720,
       region: eeBoundingBox,
-    });
+      framesPerSecond: 10,
+      // Optional: Add other parameters like crs, format, etc.
+    };
 
-    // Start the task and get its ID
-    task.start();
-    const geeTaskId = task.id;
+    console.log("Requesting animation from GEE...");
 
-    // Map our internal job ID to the GEE task ID and other necessary info
-    const internalJobId = crypto.randomUUID();
-    jobs.set(internalJobId, {
-      status: 'processing',
-      geeTaskId,
-      fileNamePrefix: videoFileName,
-    });
+    // Call the promisified function
+    const url = await getVideoThumbURL.call(videoCollection, videoParams);
 
-    console.log(`[${internalJobId}] GEE task started with ID: ${geeTaskId}`);
+    console.log("Successfully generated animation URL:", url);
 
-    return NextResponse.json({ jobId: internalJobId });
+    // Return the URL directly to the client
+    return NextResponse.json({ animationUrl: url });
 
   } catch (error) {
-    console.error('Failed to start GEE task:', error);
+    console.error('Failed to generate GEE animation:', error);
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-    return NextResponse.json({ error: 'Failed to start Earth Engine task.', details: errorMessage }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to generate Earth Engine animation.', details: errorMessage }, { status: 500 });
   }
 }

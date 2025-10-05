@@ -8,7 +8,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { JobStatus } from '@/lib/jobStore';
 
 const InteractiveMap = dynamic(() => import('@/components/InteractiveMap'), {
   ssr: false,
@@ -22,6 +21,8 @@ interface AiEvent {
   endDate: string;
 }
 
+type AnimationStatus = 'idle' | 'loading' | 'success' | 'error';
+
 export default function MapsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [mapCenter, setMapCenter] = useState<[number, number]>([20, 0]);
@@ -33,11 +34,9 @@ export default function MapsPage() {
 
   // Animation state
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
+  const [animationStatus, setAnimationStatus] = useState<AnimationStatus>('idle');
   const [animationUrl, setAnimationUrl] = useState<string | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
-  const pollingInterval = useRef<NodeJS.Timeout | null>(null);
   const timerInterval = useRef<NodeJS.Timeout | null>(null);
 
   const handleSearch = async () => {
@@ -102,10 +101,10 @@ export default function MapsPage() {
       return;
     }
 
+    // Reset state and open dialog
     setIsDialogOpen(true);
-    setJobStatus('ready');
+    setAnimationStatus('loading');
     setAnimationUrl(null);
-    setJobId(null);
     setElapsedTime(0);
 
     // Start the elapsed time timer
@@ -126,53 +125,27 @@ export default function MapsPage() {
         }),
       });
 
+      if (timerInterval.current) clearInterval(timerInterval.current);
+
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to start GEE task.');
+        throw new Error(errorData.details || 'Failed to generate animation.');
       }
 
-      const { jobId } = await response.json();
-      setJobId(jobId);
-      startPolling(jobId);
+      const { animationUrl } = await response.json();
+      setAnimationUrl(animationUrl);
+      setAnimationStatus('success');
 
     } catch (error) {
       console.error('Failed to request animation:', error);
-      alert(`Failed to start animation generation: ${(error as Error).message}`);
-      setIsDialogOpen(false);
+      setAnimationStatus('error');
+      if (timerInterval.current) clearInterval(timerInterval.current);
+      // The dialog will show the error state, no need for an alert.
     }
-  };
-
-  const startPolling = (currentJobId: string) => {
-    if (pollingInterval.current) {
-      clearInterval(pollingInterval.current);
-    }
-
-    pollingInterval.current = setInterval(async () => {
-      if (!currentJobId) return;
-      try {
-        const response = await fetch(`/api/gee/status?jobId=${currentJobId}`);
-        const data = await response.json();
-
-        setJobStatus(data.status);
-
-        if (data.status === 'completed' || data.status === 'failed') {
-          if (pollingInterval.current) clearInterval(pollingInterval.current);
-          if (timerInterval.current) clearInterval(timerInterval.current); // Stop the timer
-          if (data.status === 'completed') {
-            setAnimationUrl(data.url);
-          }
-        }
-      } catch (error) {
-        console.error('Polling error:', error);
-        if (pollingInterval.current) clearInterval(pollingInterval.current);
-        setJobStatus('failed');
-      }
-    }, 3000);
   };
 
   const closeDialog = () => {
     setIsDialogOpen(false);
-    if (pollingInterval.current) clearInterval(pollingInterval.current);
     if (timerInterval.current) clearInterval(timerInterval.current);
   }
 
@@ -272,22 +245,22 @@ export default function MapsPage() {
       <Dialog open={isDialogOpen} onOpenChange={closeDialog}>
         <DialogContent className="z-[5000]">
           <DialogHeader>
-            <DialogTitle>Animation Request Status</DialogTitle>
+            <DialogTitle>Generating Animation</DialogTitle>
           </DialogHeader>
           <div className="p-6 text-center">
-            {(jobStatus === 'ready' || jobStatus === 'running') && (
+            {animationStatus === 'loading' && (
               <div className="flex flex-col items-center justify-center space-y-4">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-                <p className="text-lg font-semibold">Status: {jobStatus.toUpperCase()}</p>
+                <p className="text-lg font-semibold">GENERATING...</p>
                 <p className="text-2xl font-mono">{formatElapsedTime(elapsedTime)}</p>
                 <p className="text-sm text-muted-foreground">
-                  Your request is processing in Google's cloud.
+                  Contacting Google Earth Engine to generate your video.
                   <br />
-                  This can take several minutes for large requests. Please be patient.
+                  This should be much faster now!
                 </p>
               </div>
             )}
-            {jobStatus === 'completed' && animationUrl && (
+            {animationStatus === 'success' && animationUrl && (
               <div>
                 <h3 className="text-lg font-medium mb-2">Animation Ready!</h3>
                 <video
@@ -302,7 +275,7 @@ export default function MapsPage() {
                 </video>
               </div>
             )}
-            {jobStatus === 'failed' && (
+            {animationStatus === 'error' && (
               <div className="text-red-500">
                 <h3 className="text-lg font-medium mb-2">Animation Failed</h3>
                 <p>Unfortunately, there was an error generating the animation.</p>
