@@ -1,23 +1,21 @@
 import ee from '@google/earthengine';
 import { Storage } from '@google-cloud/storage';
 
-const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_CREDENTIALS!);
+// By default, the Node.js client libraries will use the credentials
+// specified in the GOOGLE_APPLICATION_CREDENTIALS environment variable.
+// This is the most robust way to authenticate.
+// We no longer need to parse the credentials manually.
 
 // --- Google Cloud Storage Client ---
-export const storage = new Storage({
-  credentials,
-  projectId: credentials.project_id,
-});
+// It will automatically find and use GOOGLE_APPLICATION_CREDENTIALS
+export const storage = new Storage();
 
 // --- Google Earth Engine Client ---
-// We need to authenticate with GEE using the service account credentials.
-// This is a one-time setup process per server start.
-const privateKey = credentials.private_key;
-const clientEmail = credentials.client_email;
-
+// We still need to authenticate with GEE, but we can do it via the
+// automatically detected credentials.
 console.log('Authenticating with Google Earth Engine...');
-ee.data.authenticateViaPrivateKey(
-  privateKey,
+ee.data.authenticateViaOauth(
+  null, // Will use ADC (Application Default Credentials)
   () => {
     console.log('GEE Authentication successful.');
     ee.initialize(null, null, () => {
@@ -28,7 +26,14 @@ ee.data.authenticateViaPrivateKey(
   },
   (err: any) => {
     console.error('GEE authentication error:', err);
+  },
+  null,
+  () => {
+    // This callback runs if user consent is required, which it isn't for service accounts.
+    // If it runs, we prompt the user to use the command line to authenticate.
+    ee.data.authenticateViaPopup();
   }
 );
+
 
 export { ee };
