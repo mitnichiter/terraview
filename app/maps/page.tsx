@@ -244,16 +244,21 @@ export default function MapsPage() {
       <Dialog open={isDialogOpen} onOpenChange={closeDialog}>
         <DialogContent className="z-[5000]">
           <DialogHeader>
-            <DialogTitle>Generating Animation</DialogTitle>
+            <DialogTitle>Animation Request Status</DialogTitle>
           </DialogHeader>
-          <div>
-            {jobStatus === 'processing' && (
-              <div className="flex flex-col items-center justify-center p-8">
-                <p>Your animation is being created...</p>
-                <p className="text-sm text-muted-foreground">This may take a few moments.</p>
+          <div className="p-6 text-center">
+            {(jobStatus === 'ready' || jobStatus === 'running') && (
+              <div className="flex flex-col items-center justify-center space-y-4">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                <p className="text-lg font-semibold">Status: {jobStatus.toUpperCase()}</p>
+                <p className="text-sm text-muted-foreground">
+                  Your request has been sent to Google Earth Engine.
+                  <br />
+                  Processing large areas can take several minutes. Please be patient.
+                </p>
               </div>
             )}
-            {jobStatus === 'complete' && animationUrl && (
+            {jobStatus === 'completed' && animationUrl && (
               <div>
                 <h3 className="text-lg font-medium mb-2">Animation Ready!</h3>
                 <video
