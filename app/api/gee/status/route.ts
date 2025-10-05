@@ -22,7 +22,8 @@ export async function GET(request: Request) {
   try {
     // Get the status of the GEE task
     const taskStatus = await new Promise((resolve, reject) => {
-      ee.data.getTaskStatus({ name: `projects/earthengine-legacy/operations/${jobInfo.geeTaskId}` }, (status: any, err: any) => {
+      const fullTaskId = `projects/earthengine-legacy/operations/${jobInfo.geeTaskId}`;
+      ee.data.getTaskStatus(fullTaskId, (status: any, err: any) => {
         if (err) {
           return reject(err);
         }
