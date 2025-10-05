@@ -81,26 +81,33 @@ export default function MapsPage() {
     }
   };
 
-  const handleGenerateAnimation = async (event: AiEvent) => {
+  const handleGenerateAnimation = async (event: AiEvent, recipeName: string) => {
     if (!selectedEventBounds) {
       alert("No location bounds available to generate animation.");
       return;
     }
 
     setIsDialogOpen(true);
-    setJobStatus('processing');
+    setJobStatus('ready'); // GEE starts in a 'ready' or 'queued' state
     setAnimationUrl(null);
+    setJobId(null);
 
     try {
-      const response = await fetch('/api/animate/request', {
+      const response = await fetch('/api/gee/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           boundingBox: selectedEventBounds,
           startDate: event.startDate,
           endDate: event.endDate,
+          recipeName,
         }),
       });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to start GEE task.');
+      }
 
       const { jobId } = await response.json();
       setJobId(jobId);
@@ -108,7 +115,7 @@ export default function MapsPage() {
 
     } catch (error) {
       console.error('Failed to request animation:', error);
-      alert('Failed to start animation generation.');
+      alert(`Failed to start animation generation: ${(error as Error).message}`);
       setIsDialogOpen(false);
     }
   };
@@ -119,21 +126,23 @@ export default function MapsPage() {
     }
 
     pollingInterval.current = setInterval(async () => {
+      if (!currentJobId) return;
       try {
-        const response = await fetch(`/api/animate/status?jobId=${currentJobId}`);
+        const response = await fetch(`/api/gee/status?jobId=${currentJobId}`);
         const data = await response.json();
 
         setJobStatus(data.status);
 
-        if (data.status === 'complete' || data.status === 'failed') {
+        if (data.status === 'completed' || data.status === 'failed') {
           if (pollingInterval.current) clearInterval(pollingInterval.current);
-          if (data.status === 'complete') {
+          if (data.status === 'completed') {
             setAnimationUrl(data.url);
           }
         }
       } catch (error) {
         console.error('Polling error:', error);
         if (pollingInterval.current) clearInterval(pollingInterval.current);
+        setJobStatus('failed');
       }
     }, 3000);
   };
@@ -184,12 +193,38 @@ export default function MapsPage() {
                         <p className="text-sm text-muted-foreground">
                           {event.startDate} to {event.endDate}
                         </p>
-                        <Button
-                          className="w-full mt-4"
-                          onClick={() => handleGenerateAnimation(event)}
-                        >
-                          Generate Animation
-                        </Button>
+                        <div className="flex flex-col space-y-2 mt-4">
+                          <Button
+                            variant="secondary"
+                            onClick={() => handleGenerateAnimation(event, 'trueColorRecipe')}
+                          >
+                            View True Color
+                          </Button>
+                          {event.eventType === 'Wildfire' && (
+                             <Button
+                              variant="destructive"
+                              onClick={() => handleGenerateAnimation(event, 'wildfireRecipe')}
+                            >
+                              Analyze Fire Impact
+                            </Button>
+                          )}
+                          {event.eventType === 'Flood' && (
+                             <Button
+                              variant="default"
+                              onClick={() => handleGenerateAnimation(event, 'floodRecipe')}
+                            >
+                              Map Flood Extent (NDWI)
+                            </Button>
+                          )}
+                           {(event.eventType === 'Drought' || event.eventType === 'Vegetation') && (
+                             <Button
+                              variant="success"
+                              onClick={() => handleGenerateAnimation(event, 'vegetationRecipe')}
+                            >
+                              Analyze Vegetation (NDVI)
+                            </Button>
+                          )}
+                        </div>
                       </AccordionContent>
                     </AccordionItem>
                   ))}
