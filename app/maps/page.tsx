@@ -43,12 +43,25 @@ export default function MapsPage() {
   const handleSearch = async () => {
     if (!searchQuery) return;
     try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${searchQuery}`);
+      // Add addressdetails to get a structured address
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${searchQuery}&addressdetails=1`);
       const data = await response.json();
+
       if (data && data.length > 0) {
-        const { lat, lon } = data[0];
+        const result = data[0];
+        const { lat, lon, display_name } = result;
+
+        // Nominatim provides boundingbox as [south, north, west, east]
+        const [s, n, w, e] = result.boundingbox.map(parseFloat);
+        const bounds: [number, number, number, number] = [w, s, e, n];
+
         setMapCenter([parseFloat(lat), parseFloat(lon)]);
-        setMapZoom(6);
+        setMapZoom(8); // Zoom in a bit closer for cities/regions
+
+        // Trigger the same event fetching logic as clicking a country
+        const locationName = result.address.city || result.address.state || display_name;
+        handleCountrySelect(locationName, bounds);
+
       } else {
         alert('Location not found');
       }
