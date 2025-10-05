@@ -1,10 +1,31 @@
 import { NextResponse } from 'next/server';
 import { ee } from '@/lib/earthEngineService';
 import * as recipes from '@/lib/animationRecipes';
-import { promisify } from 'util';
 
-// Promisify the GEE get video thumb URL function
-const getVideoThumbURL = promisify(ee.ImageCollection.prototype.getVideoThumbURL);
+/**
+ * Wraps the GEE getVideoThumbURL callback in a Promise for async/await usage.
+ * The GEE library uses a non-standard callback signature (result, error),
+ * which is not compatible with util.promisify.
+ * @param {ee.ImageCollection} collection The image collection to turn into a video.
+ * @param {object} params The parameters for the video export.
+ * @returns {Promise<string>} A promise that resolves with the video URL or rejects with an error.
+ */
+function getVideoUrl(collection: ee.ImageCollection, params: object): Promise<string> {
+  return new Promise((resolve, reject) => {
+    collection.getVideoThumbURL(params, (url, error) => {
+      if (error) {
+        console.error("GEE Error:", error);
+        return reject(new Error(error));
+      }
+      if (!url) {
+        // This case can happen if the operation is cancelled or has no data.
+        return reject(new Error('Google Earth Engine did not return a URL.'));
+      }
+      resolve(url);
+    });
+  });
+}
+
 
 export async function POST(request: Request) {
   try {
@@ -27,22 +48,18 @@ export async function POST(request: Request) {
       endDate,
     });
 
-    // Define the parameters for the video thumbnail
     const videoParams = {
       dimensions: 720,
       region: eeBoundingBox,
       framesPerSecond: 10,
-      // Optional: Add other parameters like crs, format, etc.
     };
 
     console.log("Requesting animation from GEE...");
 
-    // Call the promisified function
-    const url = await getVideoThumbURL.call(videoCollection, videoParams);
+    const url = await getVideoUrl(videoCollection, videoParams);
 
     console.log("Successfully generated animation URL:", url);
 
-    // Return the URL directly to the client
     return NextResponse.json({ animationUrl: url });
 
   } catch (error) {
