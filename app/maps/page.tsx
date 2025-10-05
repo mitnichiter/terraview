@@ -36,7 +36,9 @@ export default function MapsPage() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [animationUrl, setAnimationUrl] = useState<string | null>(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
   const pollingInterval = useRef<NodeJS.Timeout | null>(null);
+  const timerInterval = useRef<NodeJS.Timeout | null>(null);
 
   const handleSearch = async () => {
     if (!searchQuery) return;
@@ -88,9 +90,16 @@ export default function MapsPage() {
     }
 
     setIsDialogOpen(true);
-    setJobStatus('ready'); // GEE starts in a 'ready' or 'queued' state
+    setJobStatus('ready');
     setAnimationUrl(null);
     setJobId(null);
+    setElapsedTime(0);
+
+    // Start the elapsed time timer
+    if (timerInterval.current) clearInterval(timerInterval.current);
+    timerInterval.current = setInterval(() => {
+      setElapsedTime(prevTime => prevTime + 1);
+    }, 1000);
 
     try {
       const response = await fetch('/api/gee/request', {
@@ -135,6 +144,7 @@ export default function MapsPage() {
 
         if (data.status === 'completed' || data.status === 'failed') {
           if (pollingInterval.current) clearInterval(pollingInterval.current);
+          if (timerInterval.current) clearInterval(timerInterval.current); // Stop the timer
           if (data.status === 'completed') {
             setAnimationUrl(data.url);
           }
@@ -149,9 +159,14 @@ export default function MapsPage() {
 
   const closeDialog = () => {
     setIsDialogOpen(false);
-    if (pollingInterval.current) {
-      clearInterval(pollingInterval.current);
-    }
+    if (pollingInterval.current) clearInterval(pollingInterval.current);
+    if (timerInterval.current) clearInterval(timerInterval.current);
+  }
+
+  const formatElapsedTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const secs = (seconds % 60).toString().padStart(2, '0');
+    return `${mins}:${secs}`;
   }
 
   return (
@@ -251,10 +266,11 @@ export default function MapsPage() {
               <div className="flex flex-col items-center justify-center space-y-4">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
                 <p className="text-lg font-semibold">Status: {jobStatus.toUpperCase()}</p>
+                <p className="text-2xl font-mono">{formatElapsedTime(elapsedTime)}</p>
                 <p className="text-sm text-muted-foreground">
-                  Your request has been sent to Google Earth Engine.
+                  Your request is processing in Google's cloud.
                   <br />
-                  Processing large areas can take several minutes. Please be patient.
+                  This can take several minutes for large requests. Please be patient.
                 </p>
               </div>
             )}
